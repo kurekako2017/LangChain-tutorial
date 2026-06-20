@@ -184,8 +184,24 @@ class ChatPromptTemplate(Runnable):
             if isinstance(item, MessagesPlaceholder):
                 out.extend(kwargs.get(item.variable_name, []))
                 continue
+            if isinstance(item, dict):
+                role = str(item.get("role", "human")).lower()
+                content = str(item.get("content", "")).format(**kwargs)
+                if role == "system":
+                    out.append(SystemMessage(content))
+                elif role in {"ai", "assistant"}:
+                    out.append(AIMessage(content))
+                elif role == "human":
+                    out.append(HumanMessage(content))
+                else:
+                    out.append(ChatMessage(content=content, role=role))
+                continue
             if isinstance(item, BaseMessage):
-                out.append(item)
+                content = item.content.format(**kwargs)
+                if isinstance(item, ChatMessage):
+                    out.append(ChatMessage(content=content, additional_kwargs=dict(item.additional_kwargs), role=item.role))
+                else:
+                    out.append(item.__class__(content=content, additional_kwargs=dict(item.additional_kwargs)))
                 continue
             if hasattr(item, "format_messages"):
                 out.extend(item.format_messages(**kwargs))
