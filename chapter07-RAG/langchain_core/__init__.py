@@ -11,7 +11,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
-import numpy as np
+try:
+    import numpy as np
+except ModuleNotFoundError:  # pragma: no cover - optional dependency in local shim
+    np = None
 
 
 def _register(name: str, attrs: Dict[str, Any], is_package: bool = False) -> types.ModuleType:
@@ -492,6 +495,8 @@ class _SimpleEmbeddings:
         import hashlib
 
         digest = hashlib.sha256((self.model + "|" + text).encode("utf-8", errors="ignore")).digest()
+        if np is None:
+            return [byte / 255.0 for byte in digest] * 4
         arr = np.frombuffer(digest, dtype=np.uint8).astype(np.float32)
         return (arr / 255.0).tolist() * 4
 
@@ -505,7 +510,10 @@ class _SimpleEmbeddings:
 class _VectorStore:
     def __init__(self, docs: List[Document], vectors: List[List[float]], embedding: Any, persist_directory: Optional[str] = None):
         self.docs = docs
-        self.vectors = np.array(vectors, dtype=np.float32) if vectors else np.zeros((0, 1), dtype=np.float32)
+        if np is None:
+            self.vectors = [list(vector) for vector in vectors] if vectors else []
+        else:
+            self.vectors = np.array(vectors, dtype=np.float32) if vectors else np.zeros((0, 1), dtype=np.float32)
         self.embedding = embedding
         self.persist_directory = persist_directory
 
@@ -522,11 +530,24 @@ class _VectorStore:
     def similarity_search_by_vector(self, vector: List[float], k: int = 4, filter: Optional[Dict[str, Any]] = None):
         if len(self.docs) == 0:
             return []
-        v = np.array(vector, dtype=np.float32)
-        matrix = self.vectors
-        denom = np.linalg.norm(matrix, axis=1) * (np.linalg.norm(v) + 1e-8)
-        scores = matrix @ v / (denom + 1e-8)
-        idx = np.argsort(scores)[::-1][:k]
+        if np is None:
+            def _norm(values: List[float]) -> float:
+                return sum(value * value for value in values) ** 0.5
+
+            query_norm = _norm(vector) + 1e-8
+            scores = []
+            for index, stored_vector in enumerate(self.vectors):
+                stored_norm = _norm(stored_vector) + 1e-8
+                dot = sum(a * b for a, b in zip(stored_vector, vector))
+                scores.append((dot / (stored_norm * query_norm), index))
+            scores.sort(key=lambda item: item[0], reverse=True)
+            idx = [index for _, index in scores[:k]]
+        else:
+            v = np.array(vector, dtype=np.float32)
+            matrix = self.vectors
+            denom = np.linalg.norm(matrix, axis=1) * (np.linalg.norm(v) + 1e-8)
+            scores = matrix @ v / (denom + 1e-8)
+            idx = np.argsort(scores)[::-1][:k]
         docs = [self.docs[i] for i in idx]
         if filter:
             docs = [doc for doc in docs if all(doc.metadata.get(key) == value for key, value in filter.items())]

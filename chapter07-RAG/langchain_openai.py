@@ -175,11 +175,8 @@ class OpenAIEmbeddings(_BaseClient):
             return data["data"][0]["embedding"]
         except Exception:
             import hashlib
-            import numpy as np
-
             digest = hashlib.sha256((self.model + "|" + text).encode("utf-8", errors="ignore")).digest()
-            arr = np.frombuffer(digest, dtype=np.uint8).astype(np.float32)
-            return (arr / 255.0).tolist() * 4
+            return [byte / 255.0 for byte in digest] * 4
 
     def embed_documents(self, texts: Iterable[str]) -> List[List[float]]:
         return [self.embed_query(text) for text in texts]
